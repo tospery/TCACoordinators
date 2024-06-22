@@ -178,8 +178,8 @@ struct Game {
 
     var currentPlayerName: String {
       switch currentPlayer {
-      case .o: oPlayerName
-      case .x: xPlayerName
+      case .o: return oPlayerName
+      case .x: return xPlayerName
       }
     }
   }
@@ -290,8 +290,8 @@ enum Player: Equatable {
 
   var label: String {
     switch self {
-    case .o: "⭕️"
-    case .x: "❌"
+    case .o: return "⭕️"
+    case .x: return "❌"
     }
   }
 }

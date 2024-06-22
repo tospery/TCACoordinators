@@ -2,13 +2,13 @@ extension FormScreen.State: Identifiable {
   var id: ID {
     switch self {
     case .step1:
-      .step1
+      return .step1
     case .step2:
-      .step2
+      return .step2
     case .step3:
-      .step3
+      return .step3
     case .finalScreen:
-      .finalScreen
+      return .finalScreen
     }
   }
 

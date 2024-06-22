@@ -24,13 +24,13 @@ struct FormAppCoordinator {
           route.map { id in
             switch id {
             case .step1:
-              .step1(step1State)
+              return .step1(step1State)
             case .step2:
-              .step2(step2State)
+              return .step2(step2State)
             case .step3:
-              .step3(step3State)
+              return .step3(step3State)
             case .finalScreen:
-              .finalScreen(finalScreenState)
+              return .finalScreen(finalScreenState)
             }
           }
         }
