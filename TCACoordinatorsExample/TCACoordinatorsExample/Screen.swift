@@ -2,11 +2,41 @@ import ComposableArchitecture
 import Foundation
 import SwiftUI
 
-@Reducer(state: .equatable)
-enum Screen {
-  case home(Home)
-  case numbersList(NumbersList)
-  case numberDetail(NumberDetail)
+struct Screen: Reducer {
+  enum Action {
+    case home(Home.Action)
+    case numbersList(NumbersList.Action)
+    case numberDetail(NumberDetail.Action)
+  }
+
+  enum State: Equatable, Identifiable {
+    case home(Home.State)
+    case numbersList(NumbersList.State)
+    case numberDetail(NumberDetail.State)
+
+    var id: UUID {
+      switch self {
+      case .home(let state):
+        return state.id
+      case .numbersList(let state):
+        return state.id
+      case .numberDetail(let state):
+        return state.id
+      }
+    }
+  }
+
+  var body: some ReducerOf<Self> {
+    Scope(state: /State.home, action: /Action.home) {
+      Home()
+    }
+    Scope(state: /State.numbersList, action: /Action.numbersList) {
+      NumbersList()
+    }
+    Scope(state: /State.numberDetail, action: /Action.numberDetail) {
+      NumberDetail()
+    }
+  }
 }
 
 // Home
@@ -24,14 +54,17 @@ struct HomeView: View {
   }
 }
 
-@Reducer
-struct Home {
+struct Home: Reducer {
   struct State: Equatable {
     let id = UUID()
   }
 
   enum Action {
     case startTapped
+  }
+
+  var body: some ReducerOf<Self> {
+    EmptyReducer()
   }
 }
 
@@ -41,23 +74,20 @@ struct NumbersListView: View {
   let store: StoreOf<NumbersList>
 
   var body: some View {
-    WithPerceptionTracking {
-      List(store.numbers, id: \.self) { number in
+    WithViewStore(store, observe: \.numbers) { viewStore in
+      List(viewStore.state, id: \.self) { number in
         Button(
           "\(number)",
           action: {
-            store.send(.numberSelected(number))
-          }
-        )
+            viewStore.send(.numberSelected(number))
+          })
       }
     }
     .navigationTitle("Numbers")
   }
 }
 
-@Reducer
-struct NumbersList {
-  @ObservableState
+struct NumbersList: Reducer {
   struct State: Equatable {
     let id = UUID()
     let numbers: [Int]
@@ -65,6 +95,10 @@ struct NumbersList {
 
   enum Action {
     case numberSelected(Int)
+  }
+
+  var body: some ReducerOf<Self> {
+    EmptyReducer()
   }
 }
 
@@ -74,36 +108,34 @@ struct NumberDetailView: View {
   let store: StoreOf<NumberDetail>
 
   var body: some View {
-    WithPerceptionTracking {
+    WithViewStore(store, observe: \.number) { viewStore in
       VStack(spacing: 8.0) {
-        Text("Number \(store.number)")
+        Text("Number \(viewStore.state)")
         Button("Increment") {
-          store.send(.incrementTapped)
+          viewStore.send(.incrementTapped)
         }
         Button("Increment after delay") {
-          store.send(.incrementAfterDelayTapped)
+          viewStore.send(.incrementAfterDelayTapped)
         }
-        Button("Show double (\(store.number * 2))") {
-          store.send(.showDouble(store.number))
+        Button("Show double") {
+          viewStore.send(.showDouble(viewStore.state))
         }
         Button("Go back") {
-          store.send(.goBackTapped)
+          viewStore.send(.goBackTapped)
         }
-        Button("Go back to root from \(store.number)") {
-          store.send(.goBackToRootTapped)
+        Button("Go back to root") {
+          viewStore.send(.goBackToRootTapped)
         }
         Button("Go back to numbers list") {
-          store.send(.goBackToNumbersList)
+          viewStore.send(.goBackToNumbersList)
         }
       }
-      .navigationTitle("Number \(store.number)")
+      .navigationTitle("Number \(viewStore.state)")
     }
   }
 }
 
-@Reducer
-struct NumberDetail {
-  @ObservableState
+struct NumberDetail: Reducer {
   struct State: Equatable {
     let id = UUID()
     var number: Int
@@ -125,7 +157,7 @@ struct NumberDetail {
       switch action {
       case .goBackToRootTapped, .goBackTapped, .goBackToNumbersList, .showDouble:
         return .none
-
+        
       case .incrementAfterDelayTapped:
         return .run { send in
           try await mainQueue.sleep(for: .seconds(3))

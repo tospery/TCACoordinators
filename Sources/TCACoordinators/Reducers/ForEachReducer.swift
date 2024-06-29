@@ -1,5 +1,5 @@
-import ComposableArchitecture
 import Foundation
+import ComposableArchitecture
 
 /// Adapted from a similar function in The Composable Architecture, that was deprecated in favour of an
 /// IdentifiedArray-based version. In general, it might be considered unwise to identify child reducers by
@@ -9,14 +9,13 @@ import Foundation
 extension Reducer {
   func forEachIndex<ElementState, ElementAction, Element: Reducer>(
     _ toElementsState: WritableKeyPath<State, [ElementState]>,
-    action toElementAction: CaseKeyPath<Action, (id: Int, action: ElementAction)>,
+    action toElementAction: CasePath<Action, (Int, ElementAction)>,
     @ReducerBuilder<ElementState, ElementAction> element: () -> Element,
     file: StaticString = #file,
     fileID: StaticString = #fileID,
     line: UInt = #line
   ) -> _ForEachIndexReducer<Self, Element>
-    where ElementState == Element.State, ElementAction == Element.Action
-  {
+  where ElementState == Element.State, ElementAction == Element.Action {
     _ForEachIndexReducer(
       parent: self,
       toElementsState: toElementsState,
@@ -31,10 +30,10 @@ extension Reducer {
 
 struct _ForEachIndexReducer<
   Parent: Reducer, Element: Reducer
->: Reducer where Parent.Action: CasePathable {
+>: Reducer {
   let parent: Parent
   let toElementsState: WritableKeyPath<Parent.State, [Element.State]>
-  let toElementAction: CaseKeyPath<Parent.Action, (id: Int, action: Element.Action)>
+  let toElementAction: CasePath<Parent.Action, (Int, Element.Action)>
   let element: Element
   let file: StaticString
   let fileID: StaticString
@@ -43,7 +42,7 @@ struct _ForEachIndexReducer<
   init(
     parent: Parent,
     toElementsState: WritableKeyPath<Parent.State, [Element.State]>,
-    toElementAction: CaseKeyPath<Parent.Action, (id: Int, action: Element.Action)>,
+    toElementAction: CasePath<Parent.Action, (Int, Element.Action)>,
     element: Element,
     file: StaticString,
     fileID: StaticString,
@@ -68,12 +67,12 @@ struct _ForEachIndexReducer<
   func reduceForEach(
     into state: inout Parent.State, action: Parent.Action
   ) -> Effect<Parent.Action> {
-    guard let (index, elementAction) = action[case: toElementAction] else { return .none }
-    let array = state[keyPath: toElementsState]
+    guard let (index, elementAction) = self.toElementAction.extract(from: action) else { return .none }
+    let array = state[keyPath: self.toElementsState]
     if array[safe: index] == nil {
       runtimeWarn(
         """
-        A "forEachRoute" at "\(fileID):\(line)" received an action for a screen at \
+        A "forEachRoute" at "\(self.fileID):\(self.line)" received an action for a screen at \
         index \(index) but the screens array only contains \(array.count) elements.
 
           Action:
@@ -82,14 +81,14 @@ struct _ForEachIndexReducer<
         This may be because a parent reducer (e.g. coordinator reducer) removed the screen at \
         this index before the action was sent.
         """,
-        file: file,
-        line: line
+        file: self.file,
+        line: self.line
       )
       return .none
     }
-    return element
-      .reduce(into: &state[keyPath: toElementsState][index], action: elementAction)
-      .map { toElementAction((id: index, action: $0)) }
+    return self.element
+      .reduce(into: &state[keyPath: self.toElementsState][index], action: elementAction)
+      .map { self.toElementAction.embed((index, $0)) }
   }
 }
 
@@ -98,16 +97,16 @@ public func runtimeWarn(
   file: StaticString? = nil,
   line: UInt? = nil
 ) {
-  #if DEBUG
-    let message = message()
-    if _XCTIsTesting {
-      if let file, let line {
-        XCTFail(message, file: file, line: line)
-      } else {
-        XCTFail(message)
-      }
+#if DEBUG
+  let message = message()
+  if _XCTIsTesting {
+    if let file, let line {
+      XCTFail(message, file: file, line: line)
     } else {
-      fputs("[TCACoordinators] \(message)\n", stderr)
+      XCTFail(message)
     }
-  #endif
+  } else {
+    fputs("[TCACoordinators] \(message)\n", stderr)
+  }
+#endif
 }

@@ -20,13 +20,16 @@ struct LogInView: View {
   }
 }
 
-@Reducer
-struct LogIn {
+struct LogIn: Reducer {
   struct State: Equatable {
     let id = UUID()
   }
 
   enum Action {
     case logInTapped(name: String)
+  }
+
+  var body: some ReducerOf<Self> {
+    EmptyReducer()
   }
 }

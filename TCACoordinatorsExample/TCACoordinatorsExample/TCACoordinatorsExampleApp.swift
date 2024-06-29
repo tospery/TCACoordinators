@@ -18,15 +18,15 @@ struct TCACoordinatorsExampleApp: App {
 // MainTabCoordinator
 
 struct MainTabCoordinatorView: View {
-  @Perception.Bindable var store: StoreOf<MainTabCoordinator>
+  let store: StoreOf<MainTabCoordinator>
 
   var body: some View {
-    WithPerceptionTracking {
-      TabView(selection: $store.selectedTab.sending(\.tabSelected)) {
+    WithViewStore(store, observe: \.selectedTab) { viewStore in
+      TabView(selection: viewStore.binding(get: { $0 }, send: MainTabCoordinator.Action.tabSelected)) {
         IndexedCoordinatorView(
           store: store.scope(
-            state: \.indexed,
-            action: \.indexed
+            state: { $0.indexed },
+            action: { .indexed($0) }
           )
         )
         .tabItem { Text("Indexed") }
@@ -34,8 +34,8 @@ struct MainTabCoordinatorView: View {
 
         IdentifiedCoordinatorView(
           store: store.scope(
-            state: \.identified,
-            action: \.identified
+            state: { $0.identified },
+            action: { .identified($0) }
           )
         )
         .tabItem { Text("Identified") }
@@ -43,8 +43,8 @@ struct MainTabCoordinatorView: View {
 
         AppCoordinatorView(
           store: store.scope(
-            state: \.app,
-            action: \.app
+            state: { $0.app },
+            action: { .app($0) }
           )
         )
         .tabItem { Text("Game") }
@@ -52,8 +52,8 @@ struct MainTabCoordinatorView: View {
 
         FormAppCoordinatorView(
           store: store.scope(
-            state: \.form,
-            action: \.form
+            state: { $0.form },
+            action: { .form($0) }
           )
         )
         .tabItem { Text("Form") }
@@ -62,14 +62,13 @@ struct MainTabCoordinatorView: View {
       }.onOpenURL { _ in
         // In reality, the URL would be parsed into a Deeplink.
         let deeplink = MainTabCoordinator.Deeplink.identified(.showNumber(42))
-        store.send(.deeplinkOpened(deeplink))
+        viewStore.send(.deeplinkOpened(deeplink))
       }
     }
   }
 }
 
-@Reducer
-struct MainTabCoordinator {
+struct MainTabCoordinator: Reducer {
   enum Tab: Hashable {
     case identified, indexed, app, form, deeplinkOpened
   }
@@ -87,7 +86,6 @@ struct MainTabCoordinator {
     case tabSelected(Tab)
   }
 
-  @ObservableState
   struct State: Equatable {
     static let initialState = State(
       identified: .initialState,
@@ -106,28 +104,28 @@ struct MainTabCoordinator {
   }
 
   var body: some ReducerOf<Self> {
-    Scope(state: \.indexed, action: \.indexed) {
+    Scope(state: \.indexed, action: /Action.indexed) {
       IndexedCoordinator()
     }
-    Scope(state: \.identified, action: \.identified) {
+    Scope(state: \.identified, action: /Action.identified) {
       IdentifiedCoordinator()
     }
-    Scope(state: \.app, action: \.app) {
+    Scope(state: \.app, action: /Action.app) {
       GameApp()
     }
-    Scope(state: \.form, action: \.form) {
+    Scope(state: \.form, action: /Action.form) {
       FormAppCoordinator()
     }
     Reduce { state, action in
       switch action {
-      case let .deeplinkOpened(.identified(.showNumber(number))):
+      case .deeplinkOpened(.identified(.showNumber(let number))):
         state.selectedTab = .identified
         if state.identified.routes.canPush == true {
           state.identified.routes.push(.numberDetail(.init(number: number)))
         } else {
           state.identified.routes.presentSheet(.numberDetail(.init(number: number)), embedInNavigationView: true)
         }
-      case let .tabSelected(tab):
+      case .tabSelected(let tab):
         state.selectedTab = tab
       default:
         break

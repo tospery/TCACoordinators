@@ -2,91 +2,87 @@ import ComposableArchitecture
 @testable import TCACoordinators
 import XCTest
 
+@MainActor
 final class IdentifiedRouterTests: XCTestCase {
-  @MainActor
   func testActionPropagation() async {
     let scheduler = DispatchQueue.test
     let store = TestStore(
-      initialState: Parent.State(routes: [
-        .root(.init(id: "first", count: 42)),
-        .sheet(.init(id: "second", count: 11)),
-      ])
+      initialState: Parent.State(
+        routes: [
+          .root(.init(id: "first", count: 42)),
+          .sheet(.init(id: "second", count: 11))
+        ]
+      )
     ) {
       Parent(scheduler: scheduler)
     }
-
-    await store.send(\.router[id: "first"].increment) {
+    await store.send(.routeAction("first", action: .increment)) {
       $0.routes[id: "first"]?.screen.count += 1
     }
-
-    await store.send(\.router[id: "second"].increment) {
+    await store.send(.routeAction("second", action: .increment)) {
       $0.routes[id: "second"]?.screen.count += 1
     }
   }
 
-  @MainActor
   func testActionCancellation() async {
     let scheduler = DispatchQueue.test
     let store = TestStore(
       initialState: Parent.State(
         routes: [
           .root(.init(id: "first", count: 42)),
-          .sheet(.init(id: "second", count: 11)),
+          .sheet(.init(id: "second", count: 11))
         ]
       )
     ) {
       Parent(scheduler: scheduler)
     }
-
     // Expect increment action after 1 second.
-    await store.send(\.router[id: "second"].incrementLaterTapped)
+    await store.send(.routeAction("second", action: .incrementLaterTapped))
     await scheduler.advance(by: .seconds(1))
-    await store.receive(\.router[id: "second"].increment) {
+    await store.receive(.routeAction("second", action: .increment)) {
       $0.routes[id: "second"]?.screen.count += 1
     }
     // Expect increment action to be cancelled if screen is removed.
-    await store.send(\.router[id: "second"].incrementLaterTapped)
-    await store.send(\.router.updateRoutes, [.root(.init(id: "first", count: 42))]) {
+    await store.send(.routeAction("second", action: .incrementLaterTapped))
+    await store.send(.updateRoutes([.root(.init(id: "first", count: 42))])) {
       $0.routes = [.root(.init(id: "first", count: 42))]
     }
   }
 
   @available(iOS 16.0, *)
-  @MainActor
   func testWithDelaysIfUnsupported() async throws {
     let initialRoutes: IdentifiedArrayOf<Route<Child.State>> = [
       .root(.init(id: "first", count: 1)),
       .sheet(.init(id: "second", count: 2)),
-      .sheet(.init(id: "third", count: 3)),
+      .sheet(.init(id: "third", count: 3))
     ]
     let scheduler = DispatchQueue.test
     let store = TestStore(initialState: Parent.State(routes: initialRoutes)) {
       Parent(scheduler: scheduler)
     }
     let goBackToRoot = await store.send(.goBackToRoot)
-    await store.receive(\.router.updateRoutes, initialRoutes.elements)
+    await store.receive(.updateRoutes(initialRoutes))
     let firstTwo = IdentifiedArrayOf(initialRoutes.prefix(2))
-    await store.receive(\.router.updateRoutes, firstTwo.elements) {
+    await store.receive(.updateRoutes(firstTwo)) {
       $0.routes = firstTwo
     }
     await scheduler.advance(by: .milliseconds(650))
     let firstOne = IdentifiedArrayOf(initialRoutes.prefix(1))
-    await store.receive(\.router.updateRoutes, firstOne.elements) {
+    await store.receive(.updateRoutes(firstOne)) {
       $0.routes = firstOne
     }
     await goBackToRoot.finish()
   }
 }
 
-@Reducer
-private struct Child {
+private struct Child: Reducer {
   let scheduler: TestSchedulerOf<DispatchQueue>
   struct State: Equatable, Identifiable {
     var id: String
     var count = 0
   }
 
-  enum Action {
+  enum Action: Equatable {
     case incrementLaterTapped
     case increment
   }
@@ -107,15 +103,15 @@ private struct Child {
   }
 }
 
-@Reducer
-private struct Parent {
+private struct Parent: Reducer {
   let scheduler: TestSchedulerOf<DispatchQueue>
-  struct State: Equatable {
+  struct State: IdentifiedRouterState, Equatable {
     var routes: IdentifiedArrayOf<Route<Child.State>>
   }
 
-  enum Action {
-    case router(IdentifiedRouterActionOf<Child>)
+  enum Action: IdentifiedRouterAction, Equatable {
+    case routeAction(Child.State.ID, action: Child.Action)
+    case updateRoutes(IdentifiedArrayOf<Route<Child.State>>)
     case goBackToRoot
   }
 
@@ -123,14 +119,14 @@ private struct Parent {
     Reduce { state, action in
       switch action {
       case .goBackToRoot:
-        .routeWithDelaysIfUnsupported(state.routes, action: \.router, scheduler: scheduler.eraseToAnyScheduler()) {
+        return .routeWithDelaysIfUnsupported(state.routes, scheduler: scheduler.eraseToAnyScheduler()) {
           $0.goBackToRoot()
         }
       default:
-        .none
+        return .none
       }
     }
-    .forEachRoute(\.routes, action: \.router) {
+    .forEachRoute {
       Child(scheduler: scheduler)
     }
   }

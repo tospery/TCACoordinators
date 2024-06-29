@@ -2,15 +2,15 @@ import ComposableArchitecture
 import SwiftUI
 
 struct Step2View: View {
-  @Perception.Bindable var store: StoreOf<Step2>
+  let store: StoreOf<Step2>
 
   var body: some View {
-    WithPerceptionTracking {
+    WithViewStore(store, observe: { $0 }) { viewStore in
       Form {
         Section {
           DatePicker(
             "Date of Birth",
-            selection: $store.dateOfBirth,
+            selection: viewStore.$dateOfBirth,
             in: ...Date.now,
             displayedComponents: .date
           )
@@ -20,7 +20,7 @@ struct Step2View: View {
         }
 
         Button("Next") {
-          store.send(.nextButtonTapped)
+          viewStore.send(.nextButtonTapped)
         }
       }
       .navigationTitle("Step 2")
@@ -28,11 +28,9 @@ struct Step2View: View {
   }
 }
 
-@Reducer
-struct Step2 {
-  @ObservableState
+struct Step2: Reducer {
   public struct State: Equatable {
-    var dateOfBirth: Date = .now
+    @BindingState var dateOfBirth: Date = .now
   }
 
   public enum Action: Equatable, BindableAction {

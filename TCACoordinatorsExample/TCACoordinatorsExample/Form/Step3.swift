@@ -5,23 +5,21 @@ struct Step3View: View {
   let store: StoreOf<Step3>
 
   var body: some View {
-    WithPerceptionTracking {
+    WithViewStore(store, observe: { $0 }) { viewStore in
       Form {
         Section {
-          if !store.occupations.isEmpty {
-            List(store.occupations, id: \.self) { occupation in
+          if !viewStore.occupations.isEmpty {
+            List(viewStore.occupations, id: \.self) { occupation in
               Button {
-                store.send(.selectOccupation(occupation))
+                viewStore.send(.selectOccupation(occupation))
               } label: {
                 HStack {
-                  WithPerceptionTracking {
-                    Text(occupation)
+                  Text(occupation)
 
-                    Spacer()
+                  Spacer()
 
-                    if let selected = store.selectedOccupation, selected == occupation {
-                      Image(systemName: "checkmark")
-                    }
+                  if let selected = viewStore.selectedOccupation, selected == occupation {
+                    Image(systemName: "checkmark")
                   }
                 }
               }
@@ -36,20 +34,18 @@ struct Step3View: View {
         }
 
         Button("Next") {
-          store.send(.nextButtonTapped)
+          viewStore.send(.nextButtonTapped)
         }
       }
       .onAppear {
-        store.send(.getOccupations)
+        viewStore.send(.getOccupations)
       }
       .navigationTitle("Step 3")
     }
   }
 }
 
-@Reducer
-struct Step3 {
-  @ObservableState
+struct Step3: Reducer {
   struct State: Equatable {
     var selectedOccupation: String?
     var occupations: [String] = []
@@ -62,21 +58,21 @@ struct Step3 {
     case nextButtonTapped
   }
 
-  @Dependency(FormScreenEnvironment.self) var environment
+  let getOccupations: () async -> [String]
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
       switch action {
       case .getOccupations:
         return .run { send in
-          await send(.receiveOccupations(environment.getOccupations()))
+          await send(.receiveOccupations(getOccupations()))
         }
 
-      case let .receiveOccupations(occupations):
+      case .receiveOccupations(let occupations):
         state.occupations = occupations
         return .none
 
-      case let .selectOccupation(occupation):
+      case .selectOccupation(let occupation):
         if state.occupations.contains(occupation) {
           state.selectedOccupation = state.selectedOccupation == occupation ? nil : occupation
         }

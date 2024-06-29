@@ -1,70 +1,114 @@
-@_spi(Internals) import ComposableArchitecture
+import ComposableArchitecture
 import FlowStacks
+import Foundation
 import SwiftUI
 
-/// TCARouter manages a collection of Routes, i.e., a series of screens, each of which is either pushed or presented.
-/// The TCARouter translates that collection into a hierarchy of SwiftUI views, and updates it when the user navigates back.
+/// TCARouter manages a collection of Routes, i.e., a series of screens, each of which is either pushed or presented. The TCARouter translates that collection into a hierarchy of SwiftUI views, and ensures that `updateScreens`.
 public struct TCARouter<
-  Screen: Equatable,
+  CoordinatorState: Equatable,
+  CoordinatorAction,
+  Screen,
   ScreenAction,
   ID: Hashable,
   ScreenContent: View
 >: View {
-  @Perception.Bindable private var store: Store<[Route<Screen>], RouterAction<ID, Screen, ScreenAction>>
+  let store: Store<CoordinatorState, CoordinatorAction>
+  let routes: (CoordinatorState) -> [Route<Screen>]
+  let updateRoutes: ([Route<Screen>]) -> CoordinatorAction
+  let action: (ID, ScreenAction) -> CoordinatorAction
   let identifier: (Screen, Int) -> ID
-  let screenContent: (Store<Screen, ScreenAction>) -> ScreenContent
 
-  public init(
-    store: Store<[Route<Screen>], RouterAction<ID, Screen, ScreenAction>>,
-    identifier: @escaping (Screen, Int) -> ID,
-    @ViewBuilder screenContent: @escaping (Store<Screen, ScreenAction>) -> ScreenContent
-  ) {
-    self.store = store
-    self.identifier = identifier
-    self.screenContent = screenContent
-  }
+  @ObservedObject private var viewStore: ViewStore<CoordinatorState, CoordinatorAction>
+  @ViewBuilder var screenContent: (Store<Screen, ScreenAction>) -> ScreenContent
 
   func scopedStore(index: Int, screen: Screen) -> Store<Screen, ScreenAction> {
     var screen = screen
-    let id = identifier(screen, index)
     return store.scope(
-      id: store.id(state: \.[index], action: \.[id: id]),
-      state: ToState {
-        screen = $0[safe: index]?.screen ?? screen
+      state: {
+        screen = routes($0)[safe: index]?.screen ?? screen
         return screen
       },
       action: {
-        .routeAction(id: id, action: $0)
-      },
-      isInvalid: { !$0.indices.contains(index) }
+        let id = identifier(screen, index)
+        return action(id, $0)
+      }
     )
   }
 
   public var body: some View {
-    if Screen.self is ObservableState.Type {
-      WithPerceptionTracking {
-        Router(
-          $store[],
-          buildView: { screen, index in
-            WithPerceptionTracking {
-              screenContent(scopedStore(index: index, screen: screen))
-            }
-          }
-        )
+    Router(
+      viewStore.binding(get: routes, send: updateRoutes),
+      buildView: { screen, index in
+        screenContent(scopedStore(index: index, screen: screen))
       }
-    } else {
-      UnobservedTCARouter(store: store, identifier: identifier, screenContent: screenContent)
-    }
+    )
+  }
+
+  public init(
+    store: Store<CoordinatorState, CoordinatorAction>,
+    routes: @escaping (CoordinatorState) -> [Route<Screen>],
+    updateRoutes: @escaping ([Route<Screen>]) -> CoordinatorAction,
+    action: @escaping (ID, ScreenAction) -> CoordinatorAction,
+    identifier: @escaping (Screen, Int) -> ID,
+    screenContent: @escaping (Store<Screen, ScreenAction>) -> ScreenContent
+  ) {
+    self.store = store
+    self.routes = routes
+    self.updateRoutes = updateRoutes
+    self.action = action
+    self.identifier = identifier
+    self.screenContent = screenContent
+    viewStore = ViewStore(store, observe: { $0 })
   }
 }
 
-private extension Store {
-  subscript<ID: Hashable, Screen, ScreenAction>() -> [Route<Screen>]
-    where State == [Route<Screen>], Action == RouterAction<ID, Screen, ScreenAction>
-  {
-    get { currentState }
-    set {
-      send(.updateRoutes(newValue))
-    }
+public extension TCARouter where Screen: Identifiable {
+  /// Convenience initializer for managing screens in an `IdentifiedArray`.
+  init(
+    store: Store<CoordinatorState, CoordinatorAction>,
+    routes: @escaping (CoordinatorState) -> IdentifiedArrayOf<Route<Screen>>,
+    updateRoutes: @escaping (IdentifiedArrayOf<Route<Screen>>) -> CoordinatorAction,
+    action: @escaping (ID, ScreenAction) -> CoordinatorAction,
+    screenContent: @escaping (Store<Screen, ScreenAction>) -> ScreenContent
+  ) where Screen.ID == ID {
+    self.init(
+      store: store,
+      routes: { Array(routes($0)) },
+      updateRoutes: { updateRoutes(IdentifiedArray(uniqueElements: $0)) },
+      action: action,
+      identifier: { state, _ in state.id },
+      screenContent: screenContent
+    )
+  }
+}
+
+public extension TCARouter where ID == Int {
+  /// Convenience initializer for managing screens in an `Array`, identified by index.
+  init(
+    store: Store<CoordinatorState, CoordinatorAction>,
+    routes: @escaping (CoordinatorState) -> [Route<Screen>],
+    updateRoutes: @escaping ([Route<Screen>]) -> CoordinatorAction,
+    action: @escaping (Int, ScreenAction) -> CoordinatorAction,
+    screenContent: @escaping (Store<Screen, ScreenAction>) -> ScreenContent
+  ) {
+    self.init(
+      store: store,
+      routes: routes,
+      updateRoutes: updateRoutes,
+      action: action,
+      identifier: { $1 },
+      screenContent: screenContent
+    )
+  }
+}
+
+extension Route: Identifiable where Screen: Identifiable {
+  public var id: Screen.ID { screen.id }
+}
+
+extension Collection {
+  /// Returns the element at the specified index if it is within bounds, otherwise nil.
+  subscript(safe index: Index) -> Element? {
+    indices.contains(index) ? self[index] : nil
   }
 }

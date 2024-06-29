@@ -2,7 +2,7 @@
 
 _The coordinator pattern in the Composable Architecture_
 
-`TCACoordinators` brings a flexible approach to navigation in SwiftUI using the [Composable Architecture (TCA)](https://github.com/pointfreeco/swift-composable-architecture). It allows you to manage complex navigation and presentation flows with a single piece of state, hoisted into a high-level coordinator. Using this pattern, you can write isolated screen features that have zero knowledge of their context within the navigation flow of an app. It achieves this by combining existing tools in TCA with [a novel approach to handling navigation in SwiftUI](https://github.com/johnpatrickmorgan/FlowStacks). 
+`TCACoordinators` brings a flexible approach to navigation in SwiftUI using the [Composable Architecture (TCA)](https://github.com/pointfreeco/swift-composable-architecture). It allows you to manage complex navigation and presentation flows with a single piece of state, hoisted into a high-level coordinator. Using this pattern, you can write isolated screen features that have zero knowledge of their context within the navigation flow of an app. It achieves this by combining existing tools in TCA such as `.forEach`, `ifCaseLet` and `SwitchStore` with [a novel approach to handling navigation in SwiftUI](https://github.com/johnpatrickmorgan/FlowStacks). 
 
 You might like this library if you want to:
 
@@ -25,14 +25,32 @@ The library works by translating the array of screens into a hierarchy of nested
 
 ### Step 1 - Create a screen reducer
 
-First, identify all possible screens that are part of the particular navigation flow you're modelling. The goal will be to combine their reducers into a single reducer - one that can drive the behaviour of any of those screens. Thanks to the `@Reducer macro`, this can be easily achieved with an enum reducer, e.g. the following (where `Home`, `NumbersList` and `NumberDetail` are the individual screen reducers):
+First, identify all possible screens that are part of the particular navigation flow you're modelling. The goal will be to combine their reducers into a single reducer - one that can drive the behaviour of any of those screens. Both the state and action types will be the sum of the individual screens' state and action types, and the reducer will combine each individual screens' reducers into one:
 
 ```swift
-@Reducer(state: .equatable)
-enum Screen {
-  case home(Home)
-  case numbersList(NumbersList)
-  case numberDetail(NumberDetail)
+struct Screen: Reducer {
+  enum State: Equatable {
+    case home(Home.State)
+    case numbersList(NumbersList.State)
+    case numberDetail(NumberDetail.State)
+  }
+  enum Action {
+    case home(Home.Action)
+    case numbersList(NumbersList.Action)
+    case numberDetail(NumberDetail.Action)
+  }
+  
+  var body: some ReducerOf<Self> {
+    Scope(state: /State.home, action: /Action.home) {
+      Home()
+    }
+    Scope(state: /State.numbersList, action: /Action.numbersList) {
+      NumbersList()
+    }
+    Scope(state: /State.numberDetail, action: /Action.numberDetail) {
+      NumberDetail()
+    }
+  }
 }
 ```
 
@@ -41,80 +59,101 @@ enum Screen {
 The coordinator will manage multiple screens in a navigation flow. Its state should include an array of `Route<Screen.State>`s, representing the navigation stack: i.e. appending a new screen state to this array will trigger the corresponding screen to be pushed or presented. `Route` is an enum whose cases capture the screen state and how it should be shown, e.g. `case push(Screen.State)`. 
 
 ```swift
-@Reducer
-struct Coordinator {
-  @ObservableState
-  struct State: Equatable {
+struct Coordinator: Reducer {
+  struct State: Equatable, IndexedRouterState {
     var routes: [Route<Screen.State>]
   }
   ...
 }
 ```
 
-The coordinator's action should include a special case, which will allow screen actions to be dispatched to the correct screen in the routes array, and allow the routes array to be updated automatically, e.g. when a user taps 'Back':
+The coordinator's action should include two special cases. The first includes an index to allow screen actions to be dispatched to the correct screen in the routes array. The second allows the routes array to be updated automatically, e.g. when a user taps 'Back':
 
 ```swift
-@Reducer
-struct Coordinator {
+struct Coordinator: Reducer {
   ...
-
-  enum Action {
-    case router(IndexedRouterActionOf<Screen>)
+  enum Action: IndexedRouterAction {
+    case routeAction(Int, action: Screen.Action)
+    case updateRoutes([Route<Screen.State>])
   }
   ...
 }
 ```
 
-The coordinator reducer defines any logic for presenting and dismissing screens, and uses `forEachRoute` to further apply the `Screen` reducer to each screen in the `routes` array. `forEachRoute` takes two arguments: a keypath for the routes array and a case path for the router action case:
+The coordinator reducer defines any logic for presenting and dismissing screens, and uses `forEachRoute` to further apply the `Screen` reducer to each screen in the `routes` array:
 
 ```swift
-@Reducer
-struct Coordinator {
+struct Coordinator: Reducer {
   ...
   var body: some ReducerOf<Self> {
     Reduce<State, Action> { state, action in
       switch action {
-      case .router(.routeAction(_, .home(.startTapped))):
+      case .routeAction(_, .home(.startTapped)):
         state.routes.presentSheet(.numbersList(.init(numbers: Array(0 ..< 4))), embedInNavigationView: true)
         
-      case .router(.routeAction(_, .numbersList(.numberSelected(let number)))):
+      case .routeAction(_, .numbersList(.numberSelected(let number))):
         state.routes.push(.numberDetail(.init(number: number)))
         
-      case .router(.routeAction(_, .numberDetail(.showDouble(let number)))):
+      case .routeAction(_, .numberDetail(.showDouble(let number))):
         state.routes.presentSheet(.numberDetail(.init(number: number * 2)))
         
-      case .router(.routeAction(_, .numberDetail(.goBackTapped))):
+      case .routeAction(_, .numberDetail(.goBackTapped)):
         state.routes.goBack()
+        
+      case .routeAction(_, .numberDetail(.goBackToNumbersList)):
+        return .routeWithDelaysIfUnsupported(state.routes) {
+          $0.goBackTo(/Screen.State.numbersList)
+        }
+        
+      case .routeAction(_, .numberDetail(.goBackToRootTapped)):
+        return .routeWithDelaysIfUnsupported(state.routes) {
+          $0.goBackToRoot()
+        }
         
       default:
         break
       }
       return .none
+    }.forEachRoute {
+      Screen()
     }
-    .forEachRoute(\.routes, action: \.router)
   }
 }
 ```
 
 ### Step 3 - Create a coordinator view
 
-With that in place, a `CoordinatorView` can be created. It will use a `TCARouter`, which translates the array of routes into a nested list of screen views with invisible `NavigationLinks` and presentation calls, all configured with bindings that react appropriately to changes to the routes array. As well as a scoped store, the `TCARouter` takes a closure that can create the view for any screen in the navigation flow. A switch statement is the natural way to achieve that, with a case for each of the possible screens:
+With that in place, a `CoordinatorView` can be created. It will use a `TCARouter`, which translates the array of routes into a nested list of screen views with invisible `NavigationLinks` and presentation calls, all configured with bindings that react appropriately to changes to the routes array. The `TCARouter` takes a closure that can create the view for any screen in the navigation flow. A `SwitchStore` is the natural way to achieve that, with a `CaseLet` for each of the possible screens:
 
 ```swift
 struct CoordinatorView: View {
   let store: StoreOf<Coordinator>
 
   var body: some View {
-    TCARouter(store.scope(state: \.routes, action: \.router)) { screen in
-      switch screen.case {
-      case let .home(store):
-        HomeView(store: store)
+    TCARouter(store) { screen in
+      SwitchStore(screen) { screen in
+        switch screen {
+        case .home:
+          CaseLet(
+            /Screen.State.home,
+            action: Screen.Action.home,
+            then: HomeView.init
+          )
 
-      case let .numbersList(store):
-        NumbersListView(store: store)
-
-      case let .numberDetail(store):
-        NumberDetailView(store: store)
+        case .numbersList:
+          CaseLet(
+            /Screen.State.numbersList,
+            action: Screen.Action.numbersList,
+            then: NumbersListView.init
+          )
+        
+        case .numberDetail:
+          CaseLet(
+            /Screen.State.numberDetail,
+            action: Screen.Action.numberDetail,
+            then: NumberDetailView.init
+          )
+        }
       }
     }
   }
@@ -147,7 +186,7 @@ If the user taps the back button, the routes array will be automatically updated
 
 ## Cancellation of in-flight effects on dismiss
 
-By default, any in-flight effects initiated by a particular screen are cancelled automatically when that screen is popped or dismissed. To opt out of automatic cancellation, pass `cancellationId: nil` to `forEachRoute`.
+By default, any in-flight effects initiated by a particular screen are cancelled automatically when that screen is popped or dismissed. This would normally require a lot of boilerplate, but can be entirely handled by this library without additional work. To opt out of automatic cancellation, pass `cancellationId: nil` to `forEachRoute`.
 
 
 ## Making complex navigation updates
@@ -155,13 +194,13 @@ By default, any in-flight effects initiated by a particular screen are cancelled
 SwiftUI does not allow more than one screen to be pushed, presented or dismissed within a single update. This makes it tricky to make large updates to the navigation state, e.g. when deeplinking straight to a view several layers deep in the navigation hierarchy, when going back multiple presentation layers to the root, or when restoring arbitrary navigation state. This library provides a workaround: it can break down large unsupported updates into a series of smaller updates that SwiftUI does support, interspersed with the necessary delays, and make that available as an Effect to be returned from a coordinator reducer. You just need to wrap route mutations in a call to `Effect.routeWithDelaysIfUnsupported`, e.g.:
 
 ```swift
-return Effect.routeWithDelaysIfUnsupported(state.routes, action: \.router) {
+return Effect.routeWithDelaysIfUnsupported(state.routes) {
   $0.goBackToRoot()
 }
 ```
 
 ```swift
-return Effect.routeWithDelaysIfUnsupported(state.routes, action: \.router) {
+return Effect.routeWithDelaysIfUnsupported(state.routes) {
   $0.push(...)
   $0.push(...)
   $0.presentSheet(...)
@@ -176,7 +215,7 @@ The coordinator is just like any other UI unit in the Composable Architecture - 
 
 ## Identifying screens
 
-In the example given, the `Coordinator.Action`'s router case included an associated value of `IndexedRouterActionOf<Screen>`. That means that screens were identified by their index in the routes array. This is safe because the index is stable for standard navigation updates - e.g. pushing and popping do not affect the indexes of existing screens. However, if you prefer to use `Identifiable` screens, you can manage the screens as an `IdentifiedArray` instead. The `Coordinator.Action`'s router case will then have an associated value of `IdentifiedRouterActionOf<Screen>` instead, and benefit from the same terse API as the example above.
+In the example given, the coordinator's state conformed to `IndexedRouterState` and action to `IndexedRouterAction`. That means that screens were identified by their index in the routes array. This is safe because the index is stable for standard navigation updates - e.g. pushing and popping do not affect the indexes of existing screens. However, if you prefer to use `Identifiable` screens, you can manage the screens as an `IdentifiedArray` instead. You can then conform the state to `IdentifiedRouterState` and action to `IdentifiedRouterAction`, and benefit from the same terse API as the example above. There are also explicit versions of the APIs available, if you prefer not to conform to any protocols, e.g. if you wish to name properties and cases differently.
 
 
 ## Flexible and reusable
@@ -186,9 +225,4 @@ If the flow of screens needs to change, the change can be made easily in one pla
 
 ## How does it work?
 
-This library uses [FlowStacks](https://github.com/johnpatrickmorgan/FlowStacks) for hoisting navigation state out of individual screens. FlowStacks can also be used in SwiftUI projects that do not use the Composable Architecture.
-
-
-## Migrating from v0.8 and lower
-
-There has been an API change from v0.8 to v0.9, to bring the library's APIs more in-line with the Composable Architecture, including the use of case paths. If you're migrating to these new APIs please see the [migration docs](Docs/Migration/Migrating%20from%200.8.md).
+This library uses [FlowStacks](https://github.com/johnpatrickmorgan/FlowStacks) for hoisting navigation state out of individual screens. This [blog post](https://johnpatrickmorgan.github.io/2021/07/03/NStack/) explains how that is achieved. FlowStacks can also be used in SwiftUI projects that do not use the Composable Architecture.   

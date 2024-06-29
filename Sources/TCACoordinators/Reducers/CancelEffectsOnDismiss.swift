@@ -7,21 +7,10 @@ public struct CancellationIdentity<CoordinatorID: Hashable, RouteID: Hashable>: 
   let routeId: RouteID
 }
 
-struct CancelEffectsOnDismiss<
-  CoordinatorScreensReducer: Reducer,
-  CoordinatorReducer: Reducer,
-  CoordinatorID: Hashable,
-  ScreenAction: CasePathable,
-  RouteID: Hashable,
-  C: Collection
->: Reducer
-  where CoordinatorScreensReducer.State == CoordinatorReducer.State,
-  CoordinatorScreensReducer.Action == CoordinatorReducer.Action,
-  CoordinatorScreensReducer.Action: CasePathable
-{
+struct CancelEffectsOnDismiss<CoordinatorScreensReducer: Reducer, CoordinatorReducer: Reducer, CoordinatorID: Hashable, ScreenAction, RouteID: Hashable, C: Collection>: Reducer where CoordinatorScreensReducer.State == CoordinatorReducer.State, CoordinatorScreensReducer.Action == CoordinatorReducer.Action {
   let coordinatedScreensReducer: CoordinatorScreensReducer
-  let routes: KeyPath<CoordinatorReducer.State, C>
-  let routeAction: CaseKeyPath<Action, (id: RouteID, action: ScreenAction)>
+  let routes: (CoordinatorReducer.State) -> C
+  let routeAction: CasePath<Action, (RouteID, ScreenAction)>
   let cancellationId: CoordinatorID?
   let getIdentifier: (C.Element, C.Index) -> RouteID
   let coordinatorReducer: CoordinatorReducer
@@ -50,23 +39,16 @@ struct CancelEffectsOnDismiss<
   }
 }
 
-struct TagRouteEffectsForCancellation<
-  ScreenReducer: Reducer,
-  CoordinatorID: Hashable,
-  RouteID: Hashable,
-  RouteAction
->: Reducer
-  where ScreenReducer.Action: CasePathable
-{
+struct TagRouteEffectsForCancellation<ScreenReducer: Reducer, CoordinatorID: Hashable, RouteID: Hashable, RouteAction>: Reducer {
   let screenReducer: ScreenReducer
   let coordinatorId: CoordinatorID
-  let routeAction: CaseKeyPath<ScreenReducer.Action, (id: RouteID, action: RouteAction)>
+  let routeAction: CasePath<Action, (RouteID, RouteAction)>
 
   var body: some ReducerOf<ScreenReducer> {
     Reduce { state, action in
       let effect = screenReducer.reduce(into: &state, action: action)
 
-      if let (id: routeId, _) = action[case: routeAction] {
+      if let (routeId, _) = routeAction.extract(from: action) {
         let identity = CancellationIdentity(coordinatorId: coordinatorId, routeId: routeId)
         return effect.cancellable(id: AnyHashable(identity))
       } else {
@@ -76,22 +58,17 @@ struct TagRouteEffectsForCancellation<
   }
 }
 
-struct CancelTaggedRouteEffectsOnDismiss<
-  CoordinatorReducer: Reducer,
-  CoordinatorID: Hashable,
-  C: Collection,
-  RouteID: Hashable
->: Reducer {
+struct CancelTaggedRouteEffectsOnDismiss<CoordinatorReducer: Reducer, CoordinatorID: Hashable, C: Collection, RouteID: Hashable>: Reducer {
   let coordinatorReducer: CoordinatorReducer
   let coordinatorId: CoordinatorID
-  let routes: KeyPath<State, C>
+  let routes: (State) -> C
   let getIdentifier: (C.Element, C.Index) -> RouteID
 
   var body: some ReducerOf<CoordinatorReducer> {
     Reduce { state, action in
-      let preRoutes = state[keyPath: routes]
+      let preRoutes = routes(state)
       let effect = coordinatorReducer.reduce(into: &state, action: action)
-      let postRoutes = state[keyPath: routes]
+      let postRoutes = routes(state)
 
       var effects: [Effect<Action>] = [effect]
 

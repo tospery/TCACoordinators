@@ -2,85 +2,80 @@ import ComposableArchitecture
 @testable import TCACoordinators
 import XCTest
 
+@MainActor
 final class IndexedRouterTests: XCTestCase {
-  @MainActor
   func testActionPropagation() async {
     let scheduler = DispatchQueue.test
     let store = TestStore(
       initialState: Parent.State(
         routes: [
           .root(.init(count: 42)),
-          .sheet(.init(count: 11)),
+          .sheet(.init(count: 11))
         ]
       )
     ) {
       Parent(scheduler: scheduler)
     }
-
-    await store.send(\.router[id: 0].increment) {
+    await store.send(.routeAction(0, action: .increment)) {
       $0.routes[0].screen.count += 1
     }
-    await store.send(\.router[id: 1].increment) {
+    await store.send(.routeAction(1, action: .increment)) {
       $0.routes[1].screen.count += 1
     }
   }
 
-  @MainActor
   func testActionCancellation() async {
     let scheduler = DispatchQueue.test
     let store = TestStore(
       initialState: Parent.State(
         routes: [
           .root(.init(count: 42)),
-          .sheet(.init(count: 11)),
+          .sheet(.init(count: 11))
         ]
       )
     ) {
       Parent(scheduler: scheduler)
     }
     // Expect increment action after 1 second.
-    await store.send(\.router[id: 1].incrementLaterTapped)
+    await store.send(.routeAction(1, action: .incrementLaterTapped))
     await scheduler.advance(by: .seconds(1))
-
-    await store.receive(\.router[id: 1].increment) {
+    await store.receive(.routeAction(1, action: .increment)) {
       $0.routes[1].screen.count += 1
     }
     // Expect increment action to be cancelled if screen is removed.
-    await store.send(\.router[id: 1].incrementLaterTapped)
-    await store.send(\.router.updateRoutes, [.root(.init(count: 42))]) {
+    await store.send(.routeAction(1, action: .incrementLaterTapped))
+    await store.send(.updateRoutes([.root(.init(count: 42))])) {
       $0.routes = [.root(.init(count: 42))]
     }
   }
 
   @available(iOS 16.0, *)
-  @MainActor
   func testWithDelaysIfUnsupported() async throws {
     let initialRoutes: [Route<Child.State>] = [
       .root(.init(count: 1)),
       .sheet(.init(count: 2)),
-      .sheet(.init(count: 3)),
+      .sheet(.init(count: 3))
     ]
     let scheduler = DispatchQueue.test
     let store = TestStore(initialState: Parent.State(routes: initialRoutes)) {
       Parent(scheduler: scheduler)
     }
     let goBackToRoot = await store.send(.goBackToRoot)
-    await store.receive(\.router.updateRoutes, initialRoutes)
+    await store.receive(.updateRoutes(initialRoutes))
     let firstTwo = Array(initialRoutes.prefix(2))
-    await store.receive(\.router.updateRoutes, firstTwo) {
+    await store.receive(.updateRoutes(firstTwo)) {
       $0.routes = firstTwo
     }
     await scheduler.advance(by: .milliseconds(650))
     let firstOne = Array(initialRoutes.prefix(1))
-    await store.receive(\.router.updateRoutes, firstOne) {
+    await store.receive(.updateRoutes(firstOne)) {
       $0.routes = firstOne
     }
     await goBackToRoot.finish()
   }
 }
 
-@Reducer
-private struct Child {
+private struct Child: Reducer {
   let scheduler: TestSchedulerOf<DispatchQueue>
   struct State: Equatable {
     var count = 0
@@ -107,31 +102,30 @@ private struct Child {
   }
 }
 
-@Reducer
-private struct Parent {
-  struct State: Equatable {
+private struct Parent: Reducer {
+  struct State: Equatable, IndexedRouterState {
     var routes: [Route<Child.State>]
   }
 
-  enum Action {
-    case router(IndexedRouterActionOf<Child>)
+  enum Action: IndexedRouterAction, Equatable {
+    case routeAction(Int, action: Child.Action)
+    case updateRoutes([Route<Child.State>])
     case goBackToRoot
   }
-
   let scheduler: TestSchedulerOf<DispatchQueue>
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
       switch action {
       case .goBackToRoot:
-        .routeWithDelaysIfUnsupported(state.routes, action: \.router, scheduler: scheduler.eraseToAnyScheduler()) {
+        return .routeWithDelaysIfUnsupported(state.routes, scheduler: scheduler.eraseToAnyScheduler()) {
           $0.goBackToRoot()
         }
       default:
-        .none
+        return .none
       }
     }
-    .forEachRoute(\.routes, action: \.router) {
+    .forEachRoute {
       Child(scheduler: scheduler)
     }
   }

@@ -2,53 +2,87 @@ import ComposableArchitecture
 import SwiftUI
 import TCACoordinators
 
-@Reducer(state: .equatable)
-enum LogInScreen {
-  case welcome(Welcome)
-  case logIn(LogIn)
+struct LogInScreen: Reducer {
+  enum Action {
+    case welcome(Welcome.Action)
+    case logIn(LogIn.Action)
+  }
+
+  enum State: Equatable, Identifiable {
+    case welcome(Welcome.State)
+    case logIn(LogIn.State)
+
+    var id: UUID {
+      switch self {
+      case .welcome(let state):
+        return state.id
+      case .logIn(let state):
+        return state.id
+      }
+    }
+  }
+
+  var body: some ReducerOf<Self> {
+    Scope(state: /State.welcome, action: /Action.welcome) {
+      Welcome()
+    }
+    Scope(state: /State.logIn, action: /Action.logIn) {
+      LogIn()
+    }
+  }
 }
 
 struct LogInCoordinatorView: View {
   let store: StoreOf<LogInCoordinator>
 
   var body: some View {
-    TCARouter(store.scope(state: \.routes, action: \.router)) { screen in
-      switch screen.case {
-      case let .welcome(store):
-        WelcomeView(store: store)
+    TCARouter(store) { screen in
+      SwitchStore(screen) { screen in
+        switch screen {
+        case .welcome:
+          CaseLet(
+            /LogInScreen.State.welcome,
+             action: LogInScreen.Action.welcome,
+             then: WelcomeView.init
+          )
 
-      case let .logIn(store):
-        LogInView(store: store)
+        case .logIn:
+          CaseLet(
+            /LogInScreen.State.logIn,
+             action: LogInScreen.Action.logIn,
+             then: LogInView.init
+          )
+        }
       }
     }
   }
 }
 
-@Reducer
-struct LogInCoordinator {
-  @ObservableState
-  struct State: Equatable {
+struct LogInCoordinator: Reducer {
+  struct State: Equatable, IdentifiedRouterState {
     static let initialState = LogInCoordinator.State(
       routes: [.root(.welcome(.init()), embedInNavigationView: true)]
     )
     var routes: IdentifiedArrayOf<Route<LogInScreen.State>>
   }
 
-  enum Action {
-    case router(IdentifiedRouterActionOf<LogInScreen>)
+  enum Action: IdentifiedRouterAction {
+    case routeAction(LogInScreen.State.ID, action: LogInScreen.Action)
+    case updateRoutes(IdentifiedArrayOf<Route<LogInScreen.State>>)
   }
 
   var body: some ReducerOf<Self> {
     Reduce { state, action in
       switch action {
-      case .router(.routeAction(_, .welcome(.logInTapped))):
+      case .routeAction(_, .welcome(.logInTapped)):
         state.routes.push(.logIn(.init()))
 
       default:
         break
       }
       return .none
+    }.forEachRoute {
+      LogInScreen()
     }
-    .forEachRoute(\.routes, action: \.router)
   }
 }

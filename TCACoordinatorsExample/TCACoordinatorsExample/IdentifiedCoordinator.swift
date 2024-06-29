@@ -3,45 +3,44 @@ import SwiftUI
 import TCACoordinators
 
 struct IdentifiedCoordinatorView: View {
-  @State var store: StoreOf<IdentifiedCoordinator>
+  let store: StoreOf<IdentifiedCoordinator>
 
   var body: some View {
-    TCARouter(store.scope(state: \.routes, action: \.router)) { screen in
-      switch screen.case {
-      case let .home(store):
-        HomeView(store: store)
+    TCARouter(store) { screen in
+      SwitchStore(screen) { screen in
+        switch screen {
+        case .home:
+          CaseLet(
+            /Screen.State.home,
+             action: Screen.Action.home,
+             then: HomeView.init
+          )
 
-      case let .numbersList(store):
-        NumbersListView(store: store)
+        case .numbersList:
+          CaseLet(
+            /Screen.State.numbersList,
+             action: Screen.Action.numbersList,
+             then: NumbersListView.init
+          )
 
-      case let .numberDetail(store):
-        NumberDetailView(store: store)
+        case .numberDetail:
+          CaseLet(
+            /Screen.State.numberDetail,
+             action: Screen.Action.numberDetail,
+             then: NumberDetailView.init
+          )
+        }
       }
     }
   }
 }
 
-extension Screen.State: Identifiable {
-  var id: UUID {
-    switch self {
-    case let .home(state):
-      state.id
-    case let .numbersList(state):
-      state.id
-    case let .numberDetail(state):
-      state.id
-    }
-  }
-}
-
-@Reducer
-struct IdentifiedCoordinator {
+struct IdentifiedCoordinator: Reducer {
   enum Deeplink {
     case showNumber(Int)
   }
 
-  @ObservableState
-  struct State: Equatable {
+  struct State: Equatable, IdentifiedRouterState {
     static let initialState = State(
       routes: [.root(.home(.init()), embedInNavigationView: true)]
     )
@@ -49,32 +48,33 @@ struct IdentifiedCoordinator {
     var routes: IdentifiedArrayOf<Route<Screen.State>>
   }
 
-  enum Action {
-    case router(IdentifiedRouterActionOf<Screen>)
+  enum Action: IdentifiedRouterAction {
+    case routeAction(Screen.State.ID, action: Screen.Action)
+    case updateRoutes(IdentifiedArrayOf<Route<Screen.State>>)
   }
 
   var body: some ReducerOf<Self> {
     Reduce<State, Action> { state, action in
       switch action {
-      case .router(.routeAction(_, .home(.startTapped))):
+      case .routeAction(_, .home(.startTapped)):
         state.routes.presentSheet(.numbersList(.init(numbers: Array(0 ..< 4))), embedInNavigationView: true)
 
-      case let .router(.routeAction(_, .numbersList(.numberSelected(number)))):
+      case .routeAction(_, .numbersList(.numberSelected(let number))):
         state.routes.push(.numberDetail(.init(number: number)))
 
-      case let .router(.routeAction(_, .numberDetail(.showDouble(number)))):
+      case .routeAction(_, .numberDetail(.showDouble(let number))):
         state.routes.presentSheet(.numberDetail(.init(number: number * 2)), embedInNavigationView: true)
 
-      case .router(.routeAction(_, .numberDetail(.goBackTapped))):
+      case .routeAction(_, .numberDetail(.goBackTapped)):
         state.routes.goBack()
 
-      case .router(.routeAction(_, .numberDetail(.goBackToNumbersList))):
-        return .routeWithDelaysIfUnsupported(state.routes, action: \.router, scheduler: .main) {
-          $0.goBackTo(\.numbersList)
+      case .routeAction(_, .numberDetail(.goBackToNumbersList)):
+        return .routeWithDelaysIfUnsupported(state.routes) {
+          $0.goBackTo(/Screen.State.numbersList)
         }
 
-      case .router(.routeAction(_, .numberDetail(.goBackToRootTapped))):
-        return .routeWithDelaysIfUnsupported(state.routes, action: \.router, scheduler: .main) {
+      case .routeAction(_, .numberDetail(.goBackToRootTapped)):
+        return .routeWithDelaysIfUnsupported(state.routes) {
           $0.goBackToRoot()
         }
 
@@ -82,7 +82,8 @@ struct IdentifiedCoordinator {
         break
       }
       return .none
+    }.forEachRoute {
+      Screen()
     }
-    .forEachRoute(\.routes, action: \.router)
   }
 }
